@@ -6,7 +6,7 @@ from .. import builder
 from ..registry import DETECTORS
 from .base import BaseDetector
 from .test_mixins import BBoxTestMixin, MaskTestMixin, RPNTestMixin
-
+from ..utils import MeanShift
 
 @DETECTORS.register_module
 class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
@@ -58,6 +58,8 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
+
+        self.meanshift = MeanShift(0.5)
 
         self.init_weights(pretrained=pretrained)
 

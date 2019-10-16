@@ -1,6 +1,8 @@
 from mmdet.core import (bbox2roi, bbox_mapping, merge_aug_bboxes,
                         merge_aug_masks, merge_aug_proposals, multiclass_nms)
-
+import torch
+import pdb
+import numpy as np
 
 class RPNTestMixin(object):
 
@@ -35,6 +37,57 @@ class RPNTestMixin(object):
 
 class BBoxTestMixin(object):
 
+    def get_dets_from_shift(self, shift_points, cluster_ids, box_scale_fac):
+
+
+        return cls_dets
+
+    def mean_shift_bbox(self, multi_bboxes, multi_scores, score_thr, max_num, roi_feats, img_shape):
+
+
+
+        box_scale_fac = np.array([img_shape[0], img_shape[1], img_shape[0], img_shape[1]])
+        box_scale_fac = torch.from_numpy(box_scale_fac).float().cuda()
+        num_classes = multi_scores.shape[1]
+        bboxes, labels = [], []
+        for i in range(1, num_classes):
+            cls_inds = multi_scores[:, i] > score_thr
+            if not cls_inds.any():
+                continue
+            # get bboxes and scores of this class
+            if multi_bboxes.shape[1] == 4:
+                _bboxes = multi_bboxes[cls_inds, :]
+            else:
+                _bboxes = multi_bboxes[cls_inds, i * 4:(i + 1) * 4]
+            _bboxes = _bboxes / box_scale_fac
+            _scores = multi_scores[cls_inds, i]
+            cls_dets = torch.cat([_bboxes, _scores[:, None]], dim=1)
+
+            pdb.set_trace()
+            shift_points, cluster_ids = self.meanshift.mean_shift(cls_dets)
+
+            cls_dets = self.get_dets_from_shift(shift_points, cluster_ids, box_scale_fac)
+            cls_labels = multi_bboxes.new_full((cls_dets.shape[0], ),
+                                               i - 1,
+                                               dtype=torch.long)
+
+            bboxes.append(cls_dets)
+            labels.append(cls_labels)
+
+        if bboxes:
+            bboxes = torch.cat(bboxes)
+            labels = torch.cat(labels)
+            if bboxes.shape[0] > max_num:
+                _, inds = bboxes[:, -1].sort(descending=True)
+                inds = inds[:max_num]
+                bboxes = bboxes[inds]
+                labels = labels[inds]
+        else:
+            bboxes = multi_bboxes.new_zeros((0, 5))
+            labels = multi_bboxes.new_zeros((0, ), dtype=torch.long)
+
+        return det_bboxes, det_labels
+
     def simple_test_bboxes(self,
                            x,
                            img_meta,
@@ -50,14 +103,21 @@ class BBoxTestMixin(object):
         cls_score, bbox_pred = self.bbox_head(roi_feats)
         img_shape = img_meta[0]['img_shape']
         scale_factor = img_meta[0]['scale_factor']
-        det_bboxes, det_labels = self.bbox_head.get_det_bboxes(
+        # det_bboxes, det_labels = self.bbox_head.get_det_bboxes(
+        bboxes, scores = self.bbox_head.get_det_bboxes(
             rois,
             cls_score,
             bbox_pred,
             img_shape,
             scale_factor,
             rescale=rescale,
-            cfg=rcnn_test_cfg)
+            cfg=None)
+        # rcnn_test_cfg)
+        det_bboxes, det_labels = self.mean_shift_bbox(bboxes, scores,
+                                                      rcnn_test_cfg.score_thr,
+                                                      rcnn_test_cfg.max_per_img,
+                                                      roi_feats, img_shape)
+
         return det_bboxes, det_labels
 
     def aug_test_bboxes(self, feats, img_metas, proposal_list, rcnn_test_cfg):
