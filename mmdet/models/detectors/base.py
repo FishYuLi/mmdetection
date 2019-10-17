@@ -6,6 +6,8 @@ import numpy as np
 import pycocotools.mask as maskUtils
 import torch.nn as nn
 
+import os.path
+
 from mmdet.core import auto_fp16, get_classes, tensor2imgs
 
 
@@ -123,10 +125,12 @@ class BaseDetector(nn.Module):
                 'dataset must be a valid dataset name or a sequence'
                 ' of class names, not {}'.format(type(dataset)))
 
+        save_dir = './draw/'
         for img, img_meta in zip(imgs, img_metas):
             h, w, _ = img_meta['img_shape']
             img_show = img[:h, :w, :]
-
+            img_name = img_meta['filename'].split('/')[-1]
+            save_name = os.path.join(save_dir, img_name)
             bboxes = np.vstack(bbox_result)
             # draw segmentation masks
             if segm_result is not None:
@@ -143,9 +147,12 @@ class BaseDetector(nn.Module):
                 for i, bbox in enumerate(bbox_result)
             ]
             labels = np.concatenate(labels)
+
             mmcv.imshow_det_bboxes(
                 img_show,
                 bboxes,
                 labels,
                 class_names=class_names,
-                score_thr=score_thr)
+                score_thr=score_thr,
+                show=False,
+                out_file=save_name)

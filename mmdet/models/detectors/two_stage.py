@@ -59,7 +59,7 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
 
-        self.meanshift = MeanShift(0.5)
+        self.meanshift = MeanShift(0.2, stop_thr=2, clus_thr=10)
 
         self.init_weights(pretrained=pretrained)
 

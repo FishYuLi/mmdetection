@@ -15,6 +15,7 @@ from mmdet.core import coco_eval, results2json, wrap_fp16_model
 from mmdet.datasets import build_dataloader, build_dataset
 from mmdet.models import build_detector
 
+import pdb
 
 def single_gpu_test(model, data_loader, show=False):
     model.eval()
@@ -27,13 +28,15 @@ def single_gpu_test(model, data_loader, show=False):
         results.append(result)
 
         if show:
-            model.module.show_result(data, result)
+            save_dir='./draw/'
+            if not os.path.isdir(save_dir):
+                os.mkdir(save_dir)
+            model.module.show_result(data, result, score_thr=0)
 
         batch_size = data['img'][0].size(0)
         for _ in range(batch_size):
             prog_bar.update()
     return results
-
 
 def multi_gpu_test(model, data_loader, tmpdir=None):
     model.eval()

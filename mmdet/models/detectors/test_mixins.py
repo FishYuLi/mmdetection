@@ -4,6 +4,11 @@ import torch
 import pdb
 import numpy as np
 
+import os
+import cv2
+
+DRAW=False
+
 class RPNTestMixin(object):
 
     def simple_test_rpn(self, x, img_meta, rpn_test_cfg):
@@ -37,19 +42,75 @@ class RPNTestMixin(object):
 
 class BBoxTestMixin(object):
 
-    def get_dets_from_shift(self, shift_points, cluster_ids, box_scale_fac):
+    def draw_cluster_bbox(self, img_file_name, draw_list):
 
+        im = cv2.imread(img_file_name)
+        alpha = 0.7
+        im_copy = im.copy()
+        all_colors = []
+        centers = []
+        for item in draw_list:
+            ori_bbox, clus_id, cluster_centers, shift_bbox = item
+            ori_bbox = ori_bbox.cpu().numpy()
+            # ori_bbox = shift_bbox.cpu().numpy()
+            cluster_centers = cluster_centers.cpu().numpy()
+            centers.append(cluster_centers)
+            clus_id = clus_id.cpu().numpy()
 
-        return cls_dets
+            bbox_num = ori_bbox.shape[0]
 
-    def mean_shift_bbox(self, multi_bboxes, multi_scores, score_thr, max_num, roi_feats, img_shape):
+            cluster_num = cluster_centers.shape[0]
+            colors = [np.random.randint(255, size=(3,)) for i in range(cluster_num)]
+            colors = [c.tolist() for c in colors]
+            all_colors.append(colors)
 
+            for i in range(bbox_num):
+                ori = ori_bbox[i]
+                cluster = int(clus_id[i])
 
+                pt1 = (int(ori[0]), int(ori[1]))
+                pt2 = (int(ori[2]), int(ori[3]))
+                # score = int(ori[4])
 
-        box_scale_fac = np.array([img_shape[0], img_shape[1], img_shape[0], img_shape[1]])
+                color = colors[cluster]
+                cv2.rectangle(im, pt1, pt2, color, thickness=1)
+
+        im = im * alpha + im_copy * (1-alpha)
+        for colors, cluster_centers in zip(all_colors, centers):
+            cluster_num = cluster_centers.shape[0]
+            for i in range(cluster_num):
+                ori = cluster_centers[i]
+
+                pt1 = (int(ori[0]), int(ori[1]))
+                pt2 = (int(ori[2]), int(ori[3]))
+                # score = int(ori[4])
+
+                color = colors[i]
+                cv2.rectangle(im, pt1, pt2, (255,255,255), thickness=3)
+                cv2.rectangle(im, pt1, pt2, color, thickness=2)
+
+        name = img_file_name.split('/')[-1]
+        save_path = os.path.join('./draw', name)
+        cv2.imwrite(save_path, im)
+
+    def get_dets_from_shift(self, shift_points, cluster_ids, cluster_centers, ori_points, box_scale_fac):
+
+        cluster_centers[:, :4] = cluster_centers[:, :4] * box_scale_fac
+        cls_dets = torch.cat([cluster_centers, torch.ones((cluster_centers.shape[0],1)).cuda()], dim=1)
+
+        shift_points[:, :4] = shift_points[:, :4] * box_scale_fac
+        ori_points[:, :4] = ori_points[:, :4] * box_scale_fac
+        return cls_dets, shift_points, ori_points
+
+    def mean_shift_bbox(self, multi_bboxes, multi_scores, score_thr, max_num, roi_feats, img_shape, img_file_name):
+
+        # box_scale_fac = np.array([img_shape[0], img_shape[1], img_shape[0], img_shape[1]])
+        box_scale_fac = np.array([1., 1., 1., 1.])
         box_scale_fac = torch.from_numpy(box_scale_fac).float().cuda()
         num_classes = multi_scores.shape[1]
         bboxes, labels = [], []
+
+        draw_list = []
         for i in range(1, num_classes):
             cls_inds = multi_scores[:, i] > score_thr
             if not cls_inds.any():
@@ -63,16 +124,20 @@ class BBoxTestMixin(object):
             _scores = multi_scores[cls_inds, i]
             cls_dets = torch.cat([_bboxes, _scores[:, None]], dim=1)
 
-            pdb.set_trace()
-            shift_points, cluster_ids = self.meanshift.mean_shift(cls_dets)
+            shift_points, cluster_ids, cluster_centers, ori_points = self.meanshift.mean_shift(_bboxes, cls_dets)
 
-            cls_dets = self.get_dets_from_shift(shift_points, cluster_ids, box_scale_fac)
+            cls_dets, shift_points, ori_points = self.get_dets_from_shift(shift_points, cluster_ids, cluster_centers, ori_points, box_scale_fac)
+
+            draw_list.append((ori_points, cluster_ids, cluster_centers, shift_points))
             cls_labels = multi_bboxes.new_full((cls_dets.shape[0], ),
                                                i - 1,
                                                dtype=torch.long)
 
             bboxes.append(cls_dets)
             labels.append(cls_labels)
+
+        if DRAW:
+            self.draw_cluster_bbox(img_file_name, draw_list)
 
         if bboxes:
             bboxes = torch.cat(bboxes)
@@ -86,7 +151,7 @@ class BBoxTestMixin(object):
             bboxes = multi_bboxes.new_zeros((0, 5))
             labels = multi_bboxes.new_zeros((0, ), dtype=torch.long)
 
-        return det_bboxes, det_labels
+        return bboxes, labels
 
     def simple_test_bboxes(self,
                            x,
@@ -103,6 +168,7 @@ class BBoxTestMixin(object):
         cls_score, bbox_pred = self.bbox_head(roi_feats)
         img_shape = img_meta[0]['img_shape']
         scale_factor = img_meta[0]['scale_factor']
+        img_file_name = img_meta[0]['filename']
         # det_bboxes, det_labels = self.bbox_head.get_det_bboxes(
         bboxes, scores = self.bbox_head.get_det_bboxes(
             rois,
@@ -116,7 +182,8 @@ class BBoxTestMixin(object):
         det_bboxes, det_labels = self.mean_shift_bbox(bboxes, scores,
                                                       rcnn_test_cfg.score_thr,
                                                       rcnn_test_cfg.max_per_img,
-                                                      roi_feats, img_shape)
+                                                      roi_feats, img_shape,
+                                                      img_file_name)
 
         return det_bboxes, det_labels
 
