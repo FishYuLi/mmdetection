@@ -156,6 +156,11 @@ def _dist_train(model, dataset, cfg, validate=False):
     runner = Runner(model, batch_processor, optimizer, cfg.work_dir,
                     cfg.log_level)
 
+    # Add for LVIS by LiYu
+    import logging
+    runner.logger.setLevel(logging.INFO)
+    # ====================
+
     # fp16 setting
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
@@ -210,6 +215,12 @@ def _non_dist_train(model, dataset, cfg, validate=False):
     optimizer = build_optimizer(model, cfg.optimizer)
     runner = Runner(model, batch_processor, optimizer, cfg.work_dir,
                     cfg.log_level)
+
+    # Add for LVIS by LiYu
+    import logging
+    runner.logger.setLevel(logging.INFO)
+    # ====================
+
     # fp16 setting
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:

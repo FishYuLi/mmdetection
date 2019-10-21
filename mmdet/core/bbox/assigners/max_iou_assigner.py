@@ -72,6 +72,18 @@ class MaxIoUAssigner(BaseAssigner):
         """
         if bboxes.shape[0] == 0 or gt_bboxes.shape[0] == 0:
             raise ValueError('No gt or bboxes')
+
+        # Added by liyu to solve the GPU_out_of_mem issue.
+        # This solution will slow down the train.
+        # ===============================================
+        bboxes = bboxes.cpu()
+        gt_bboxes = gt_bboxes.cpu()
+        if gt_bboxes_ignore is not None:
+            gt_bboxes_ignore = gt_bboxes_ignore.cpu()
+        if gt_labels is not None:
+            gt_labels = gt_labels.cpu()
+        # ===============================================
+
         bboxes = bboxes[:, :4]
         overlaps = bbox_overlaps(gt_bboxes, bboxes)
 
@@ -88,6 +100,16 @@ class MaxIoUAssigner(BaseAssigner):
             overlaps[:, ignore_max_overlaps > self.ignore_iof_thr] = -1
 
         assign_result = self.assign_wrt_overlaps(overlaps, gt_labels)
+
+        # Added by liyu to solve the GPU_out_of_mem issue.
+        # This solution will slow down the train.
+        # ===============================================
+        assign_result.gt_inds = assign_result.gt_inds.cuda()
+        assign_result.max_overlaps = assign_result.max_overlaps.cuda()
+        if assign_result.labels is not None:
+            assign_result.labels = assign_result.labels.cuda()
+        # ===============================================
+
         return assign_result
 
     def assign_wrt_overlaps(self, overlaps, gt_labels=None):
