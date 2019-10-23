@@ -14,10 +14,6 @@ from urllib.request import urlretrieve
 
 import pycocotools.mask as mask_utils
 
-import matplotlib.pyplot as plt
-from matplotlib.collections import PatchCollection
-from matplotlib.patches import Polygon
-import numpy as np
 
 class LVIS:
     def __init__(self, annotation_path):
@@ -38,132 +34,6 @@ class LVIS:
     def _load_json(self, path):
         with open(path, "r") as f:
             return json.load(f)
-
-    # def _create_index_only_test_on_finetune_classes(self):
-
-    def _create_index_load_fewshot_classes_anns(self):
-        fewshot_dataset={}
-        import pickle
-        cls_ids = [1047, 243]## cls to load
-        all_anns = []
-        for id in cls_ids:
-            all_anns.append(pickle.load(open('./fewshot_pasted_anns/{}_anns.pt'.format(id), 'rb')))
-        all_anns=[ann for subset in all_anns for ann in subset]## flatten the list
-        fewshot_dataset['annotations']=all_anns
-
-        self.logger.info("Creating index on finetune, overwite existing index.")
-
-        self.img_ann_map = defaultdict(list)
-        self.cat_img_map = defaultdict(list)
-
-        self.anns = {}
-        self.cats = {}
-        self.imgs = {}
-
-        for ann in all_anns:
-            self.img_ann_map[ann["image_id"]].append(ann)
-            self.anns[ann["id"]] = ann
-
-        id_to_train_imgs = {img_info['id']: img_info for img_info in self.dataset["images"]}
-        get_orig_img_infos = [id_to_train_imgs[ann['orig_image_id']] for ann in all_anns]
-        for idx, ann in enumerate(all_anns):## replace image_id and filename with fewshot newly annotated ones
-            get_orig_img_infos[idx]['id'] = ann['image_id']
-            get_orig_img_infos[idx]['file_name'] = str(ann['image_id']).zfill(6)+'.jpg'
-
-        fewshot_dataset['images']=get_orig_img_infos
-
-        for img in fewshot_dataset["images"]:
-            if img['id'] in self.img_ann_map.keys():
-                self.imgs[img["id"]] = img
-
-        for cat in self.dataset["categories"]:
-            if cat['id'] in cls_ids:
-                self.cats[cat["id"]] = cat
-
-        for ann in fewshot_dataset["annotations"]:
-            if ann['category_id'] in cls_ids:
-                self.cat_img_map[ann["category_id"]].append(ann["image_id"])
-
-
-    def _create_index_filter(self):
-
-        finetune_class_ids = [1047, 243]
-        self.logger.info("Creating index on finetune, overwite existing index.")
-
-        self.img_ann_map = defaultdict(list)
-        self.cat_img_map = defaultdict(list)
-
-        self.anns = {}
-        self.cats = {}
-        self.imgs = {}
-
-        for ann in self.dataset["annotations"]:
-            if ann['category_id'] in finetune_class_ids:
-                self.img_ann_map[ann["image_id"]].append(ann)
-                self.anns[ann["id"]] = ann
-
-        for img in self.dataset["images"]:
-            if img['id'] in self.img_ann_map.keys():
-                self.imgs[img["id"]] = img
-
-        for cat in self.dataset["categories"]:
-            self.cats[cat["id"]] = cat
-
-        for ann in self.dataset["annotations"]:
-            if ann['category_id'] in finetune_class_ids:
-                self.cat_img_map[ann["category_id"]].append(ann["image_id"])
-
-        self.logger.info("Index created.")
-
-    # def _create_index(self):## when used in evaluation on val set, only eval on finetune classes existed imgs,
-    #     #  for speed up evaluation, but also has not count false pos on other imgs, so would be higher than regular result
-    #     # can consider add neg imgs, and should be same as normal result
-
-    #     import pickle
-    #     train_info = pickle.load(open('./lvis_train_cats_info.pt', 'rb'))
-    #     val_info = pickle.load(open('./lvis_val_cats_info.pt', 'rb'))
-    #     train_on_val_cls = [train_item for idx, (train_item, val_item) in enumerate(zip(train_info, val_info))]
-    #     train_on_val_cls_label_to_info = {item['id']: item['instance_count'] for item in train_on_val_cls}
-    #     # morethan1000clsid = [k for i,(k,v) in enumerate(train_on_val_cls_label_to_info.items()) if v>=1000]
-    #     # lessthan1000clsid = [k for i,(k,v) in enumerate(train_on_val_cls_label_to_info.items()) if v<1000]
-    #     morethan100clsid = [k for i, (k, v) in enumerate(train_on_val_cls_label_to_info.items()) if v >= 100]
-    #     lessthan100clsid = [k for i, (k, v) in enumerate(train_on_val_cls_label_to_info.items()) if v < 100]
-
-    #     # zero_ap_classes = pickle.load(open('./zero_ap_classes_mrcnnr50_boxmask_ag.pt', 'rb'))
-    #     # finetune_class_ids = [item['id'] for item in zero_ap_classes if item['instance_count'] > 100]
-    #     # finetune_class_ids = [1047, 243]
-
-    #     finetune_class_ids = lessthan100clsid
-    #     self.logger.info("Creating index on finetune, overwite existing index.")
-
-    #     self.img_ann_map = defaultdict(list)
-    #     self.cat_img_map = defaultdict(list)
-
-    #     self.anns = {}
-    #     self.cats = {}
-    #     self.imgs = {}
-    #     ## try directly fine tune on val annotation for a sanity check
-    #     # self.dataset = self._load_json('data/lvis/lvis_v0.5_val.json')
-
-
-    #     for ann in self.dataset["annotations"]:
-    #         if ann['category_id'] in finetune_class_ids:
-    #             self.img_ann_map[ann["image_id"]].append(ann)
-    #             self.anns[ann["id"]] = ann
-
-    #     for img in self.dataset["images"]:
-    #         if img['id'] in self.img_ann_map.keys():
-    #             self.imgs[img["id"]] = img
-
-    #     for cat in self.dataset["categories"]:
-    #         # if cat['id'] in finetune_class_ids:
-    #         self.cats[cat["id"]] = cat
-
-    #     for ann in self.dataset["annotations"]:
-    #         if ann['category_id'] in finetune_class_ids:
-    #             self.cat_img_map[ann["category_id"]].append(ann["image_id"])
-
-    #     self.logger.info("Index created.")
 
     def _create_index(self):
         self.logger.info("Creating index.")
@@ -240,9 +110,7 @@ class LVIS:
         Returns:
             ids (int array): integer array of image ids
         """
-        print('use deterministic image ids sequence')
-        return list(sorted(self.imgs.keys()))
-        # return list(self.imgs.keys())
+        return list(self.imgs.keys())
 
     def _load_helper(self, _dict, ids):
         if ids is None:
@@ -335,41 +203,3 @@ class LVIS:
         """
         rle = self.ann_to_rle(ann)
         return mask_utils.decode(rle)
-
-    def showanns(self, anns):
-        """
-        Display the specified annotations.
-        :param anns (array of object): annotations to display
-        :return: None
-        """
-        if len(anns) == 0:
-            return 0
-        if 'segmentation' in anns[0] or 'keypoints' in anns[0]:
-            datasetType = 'instances'
-        elif 'caption' in anns[0]:
-            datasetType = 'captions'
-        else:
-            raise Exception('datasetType not supported')
-        if datasetType == 'instances':
-            ax = plt.gca()
-            ax.set_autoscale_on(False)
-            polygons = []
-            color = []
-            for ann in anns:
-                c = (np.random.random((1, 3))*0.6+0.4).tolist()[0]
-                if 'segmentation' in ann:
-                    if type(ann['segmentation']) == list:
-                        # polygon
-                        for seg in ann['segmentation']:
-                            poly = np.array(seg).reshape((int(len(seg)/2), 2))
-                            polygons.append(Polygon(poly))
-                            color.append(c)
-                    else:
-                        # mask
-                        raise NotImplementedError
-            p = PatchCollection(polygons, facecolor=color, linewidths=0, alpha=0.4)
-            ax.add_collection(p)
-            p = PatchCollection(polygons, facecolor='none', edgecolors=color, linewidths=2)
-            ax.add_collection(p)
-        elif datasetType == 'captions':
-            raise NotImplementedError
