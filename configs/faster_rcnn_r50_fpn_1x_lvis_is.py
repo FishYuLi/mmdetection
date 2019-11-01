@@ -138,6 +138,7 @@ test_pipeline = [
 data = dict(
     imgs_per_gpu=2,
     workers_per_gpu=2,
+    use_img_sampling=True,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'lvis_v0.5_train.json',
@@ -176,7 +177,7 @@ log_config = dict(
 total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/faster_rcnn_r50_fpn_1x_lvis'
+work_dir = './work_dirs/faster_rcnn_r50_fpn_1x_lvis_is'
 load_from = './data/download_models/faster_rcnn_r50_fpn_2x_20181010-443129e1.pth'
 resume_from = None
 workflow = [('train', 1)]

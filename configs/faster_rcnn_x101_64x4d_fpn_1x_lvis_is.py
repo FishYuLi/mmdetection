@@ -1,10 +1,12 @@
 # model settings
 model = dict(
     type='FasterRCNN',
-    pretrained='torchvision://resnet50',
+    pretrained='open-mmlab://resnext101_64x4d',
     backbone=dict(
-        type='ResNet',
-        depth=50,
+        type='ResNeXt',
+        depth=101,
+        groups=64,
+        base_width=4,
         num_stages=4,
         out_indices=(0, 1, 2, 3),
         frozen_stages=1,
@@ -93,12 +95,6 @@ test_cfg = dict(
         nms_thr=0.7,
         min_bbox_size=0),
     rcnn=dict(
-        assigner=dict(
-            type='MaxIoUAssigner',
-            pos_iou_thr=0.5,
-            neg_iou_thr=0.5,
-            min_pos_iou=0.5,
-            ignore_iof_thr=-1),
         score_thr=0.0,
         nms=dict(type='nms', iou_thr=0.5),
         max_per_img=300)
@@ -138,6 +134,7 @@ test_pipeline = [
 data = dict(
     imgs_per_gpu=2,
     workers_per_gpu=2,
+    use_img_sampling=True,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'lvis_v0.5_train.json',
@@ -176,7 +173,7 @@ log_config = dict(
 total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/faster_rcnn_r50_fpn_1x_lvis'
-load_from = './data/download_models/faster_rcnn_r50_fpn_2x_20181010-443129e1.pth'
+work_dir = './work_dirs/faster_rcnn_x101_64x4d_fpn_1x_lvis_is'
+load_from = './data/download_models/faster_rcnn_x101_64x4d_fpn_1x_20181218-c9c69c8f.pth'
 resume_from = None
 workflow = [('train', 1)]
