@@ -40,7 +40,7 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
 
         if rpn_head is not None:
             self.rpn_head = builder.build_head(rpn_head)
-
+        self.use_reweight = False
         if bbox_head is not None:
             self.bbox_roi_extractor = builder.build_roi_extractor(
                 bbox_roi_extractor)
@@ -265,6 +265,7 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
         assert self.with_bbox, "Bbox head must be implemented."
 
         x = self.extract_feat(img)
+        scale_factor = img_meta[0]['scale_factor']
 
         proposal_list = self.simple_test_rpn(
             x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
@@ -274,8 +275,10 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
         bbox_results = bbox2result(det_bboxes, det_labels,
                                    self.bbox_head.num_classes)
 
+        proposals = proposal_list[0] / scale_factor
+        pred_label = scores.argmax(dim=1)
         if not self.with_mask:
-            return bbox_results
+            return bbox_results, proposals, pred_label
         else:
             segm_results = self.simple_test_mask(
                 x, img_meta, det_bboxes, det_labels, rescale=rescale)

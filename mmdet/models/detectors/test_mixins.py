@@ -1,6 +1,7 @@
 from mmdet.core import (bbox2roi, bbox_mapping, merge_aug_bboxes,
                         merge_aug_masks, merge_aug_proposals, multiclass_nms)
 
+import torch
 
 class RPNTestMixin(object):
 
@@ -50,15 +51,22 @@ class BBoxTestMixin(object):
         cls_score, bbox_pred = self.bbox_head(roi_feats)
         img_shape = img_meta[0]['img_shape']
         scale_factor = img_meta[0]['scale_factor']
-        det_bboxes, det_labels = self.bbox_head.get_det_bboxes(
+        bboxes, scores = self.bbox_head.get_det_bboxes(
             rois,
             cls_score,
             bbox_pred,
             img_shape,
             scale_factor,
             rescale=rescale,
-            cfg=rcnn_test_cfg)
-        return det_bboxes, det_labels
+            cfg=None)
+        # cfg=rcnn_test_cfg)
+
+        det_bboxes, det_labels = multiclass_nms(bboxes, scores,
+                                                rcnn_test_cfg.score_thr,
+                                                rcnn_test_cfg.nms,
+                                                rcnn_test_cfg.max_per_img)
+        return det_bboxes, det_labels, scores
+
 
     def aug_test_bboxes(self, feats, img_metas, proposal_list, rcnn_test_cfg):
         aug_bboxes = []

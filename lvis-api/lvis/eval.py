@@ -10,6 +10,9 @@ from lvis.results import LVISResults
 
 import pycocotools.mask as mask_utils
 
+from matplotlib import pyplot as plt
+import pickle
+import pdb
 
 class LVISEval:
     def __init__(self, lvis_gt, lvis_dt, iou_type="segm"):
@@ -87,6 +90,7 @@ class LVISEval:
         # presence or absence in an image.
         img_data = self.lvis_gt.load_imgs(ids=self.params.img_ids)
         # per image map of categories not present in image
+        # img_nl = {d["id"]: d["not_exhaustive_category_ids"] for d in img_data}
         img_nl = {d["id"]: d["neg_category_ids"] for d in img_data}
         # per image list of categories present in image
         img_pl = defaultdict(set)
@@ -136,12 +140,19 @@ class LVISEval:
         }
 
         # loop through images, area range, max detection number
-        self.eval_imgs = [
-            self.evaluate_img(img_id, cat_id, area_rng)
-            for cat_id in cat_ids
-            for area_rng in self.params.area_rng
-            for img_id in self.params.img_ids
-        ]
+        # self.eval_imgs = [
+        #     self.evaluate_img(img_id, cat_id, area_rng)
+        #     for cat_id in cat_ids
+        #     for area_rng in self.params.area_rng
+        #     for img_id in self.params.img_ids
+        # ]
+        self.eval_imgs = []
+        for cat_id in cat_ids:
+            for area_rng in self.params.area_rng:
+                for img_id in self.params.img_ids:
+                    self.eval_imgs.append(self.evaluate_img(img_id, cat_id, area_rng))
+
+
 
     def _get_gt_dt(self, img_id, cat_id):
         """Create gt, dt which are list of anns/dets. If use_cats is true
@@ -325,6 +336,8 @@ class LVISEval:
 
         # Per category evaluation
         for cat_idx in range(num_cats):
+            # if cat_idx ==3:
+            #     print('df')
             Nk = cat_idx * num_area_rngs * num_imgs
             for area_idx in range(num_area_rngs):
                 Na = area_idx * num_imgs
@@ -444,6 +457,34 @@ class LVISEval:
             mean_s = np.mean(s[s > -1])
         return mean_s
 
+    def _summarize_per_cate(
+        self, summary_type, iou_thr=None, area_rng="all", freq_group_idx=None
+    ):
+        aidx = [
+            idx
+            for idx, _area_rng in enumerate(self.params.area_rng_lbl)
+            if _area_rng == area_rng
+        ]
+
+        if summary_type == 'ap':
+            s = self.eval["precision"]
+            if iou_thr is not None:
+                tidx = np.where(iou_thr == self.params.iou_thrs)[0]
+                s = s[tidx]
+            if freq_group_idx is not None:
+                s = s[:, :, self.freq_groups[freq_group_idx], aidx]
+            else:
+                s = s[:, :, :, aidx]
+        else:
+            s = self.eval["recall"]
+            if iou_thr is not None:
+                tidx = np.where(iou_thr == self.params.iou_thrs)[0]
+                s = s[tidx]
+            s = s[:, :, aidx]
+
+        return list(map(lambda s: np.mean(s[s > -1]), np.split(s, 1230, axis=2)))
+
+
     def summarize(self):
         """Compute and display summary metrics for evaluation results."""
         if not self.eval:
@@ -452,6 +493,7 @@ class LVISEval:
         max_dets = self.params.max_dets
 
         self.results["AP"]   = self._summarize('ap')
+        self.results["AP_per_cate"]   = self._summarize_per_cate('ap')
         self.results["AP50"] = self._summarize('ap', iou_thr=0.50)
         self.results["AP75"] = self._summarize('ap', iou_thr=0.75)
         self.results["APs"]  = self._summarize('ap', area_rng="small")
@@ -474,11 +516,112 @@ class LVISEval:
         self.accumulate()
         self.summarize()
 
-    def print_results(self):
-        template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} catIds={:>3s}] = {:0.3f}"
+    def print_results(self, draw_ap_per_cate=True):
 
-        for key, value in self.results.items():
+        template = "| {:^6} | {:<9} | {:>6s} | {:>3d} | {:>12s} | {:2.2f}% |"
+        # template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} catIds={:>3s}] = {:0.3f}"
+        print_dict = {}
+        for key, value in self.results.items():##drawing ap and per class training/val ins statistics for all classes
             max_dets = self.params.max_dets
+            cate_info_train = pickle.load(open('./lvis-api/data/lvis_train_cate_info.pt', 'rb'))
+            if key =='AP_per_cate':
+                ar_per_cate_array = pickle.load(open('./lvis-api/data/lvis_maskrcnn_r50fpn.pkl_per_cat_recall.pt', 'rb'))
+                exist_categories_in_val_ap_sorted_mrcnn_r101fpn = pickle.load(open('./lvis-api/data/exist_categories_in_val_ap_sorted_mrcnn_r101fpn.pt', 'rb'))
+                if draw_ap_per_cate:
+                    ap_per_cate_array = np.array(self.results['AP_per_cate'])
+                    ap_per_exist_cate_array = ap_per_cate_array[~np.isnan(self.results['AP_per_cate'])]
+                    exist_categories_in_val = [item_val for idx, (item_val, item_train) in
+                                               enumerate(zip(self.lvis_gt.dataset['categories'], cate_info_train))
+                                               if item_val['instance_count'] > 0]
+                    exist_categories_in_val_in_trian = [item_train for idx, (item_val, item_train) in
+                                               enumerate(zip(self.lvis_gt.dataset['categories'], cate_info_train))
+                                               if item_val['instance_count'] > 0]
+                    # [item.update({'ap': ap_per_exist_cate_array[i]}) for i,item in enumerate(exist_categories_in_val)]
+                    [item.update({'ap': ap_per_cate_array[item['id']-1]}) for i, item in enumerate(exist_categories_in_val)]
+                    [item.update({'ar': ar_per_cate_array[item['id']]}) for i,item in enumerate(exist_categories_in_val)]
+
+                    #use the index returned from argsort to sort both val and train cats as sorted would have different index
+                    # exist_categories_in_val_sorted_on_inscount = sorted(exist_categories_in_val, key=lambda x: x['instance_count'])
+
+                    sorting_index = np.argsort([item['instance_count'] for item in exist_categories_in_val])
+                    exist_categories_in_val_sorted_on_inscount = [exist_categories_in_val[sorting_index[i]] for i in
+                                                                  range(len(sorting_index))]
+                    exist_categories_in_val_sorted_on_inscount_in_train = [exist_categories_in_val_in_trian[sorting_index[i]]
+                                                                           for i in range(len(sorting_index))]
+
+                    exist_categories_in_val_ap_sorted = [item['ap'] for item in exist_categories_in_val_sorted_on_inscount]
+                    exist_categories_in_val_ar_sorted = [item['ar'] for item in exist_categories_in_val_sorted_on_inscount]
+
+                    exist_categories_in_val_ins_count = [item['instance_count'] for item in exist_categories_in_val_sorted_on_inscount]
+                    exist_categories_in_val_in_train_ins_count =[item['instance_count'] for item in exist_categories_in_val_sorted_on_inscount_in_train]
+
+                    ##get zero-ap classes
+                    # zero_ap_classes = [exist_categories_in_val_sorted_on_inscount_in_train[i] for i in
+                    #     range(len(exist_categories_in_val_ap_sorted)) if exist_categories_in_val_ap_sorted[i] == 0]
+                    # pickle.dump(zero_ap_classes, open('./zero_ap_classes_mrcnnr50_boxmask_ag.pt', 'wb'))
+
+                    fewshot_map_to_parent = {'bible': 'book', 'cargo_ship': 'boat',
+                                              'chest_of_drawers_(furniture)': 'cabinet', 'dolphin': 'fish',
+                                              'elk': 'deer',
+                                              'mint_candy': 'cigarette_case', 'paperback_book': 'book',
+                                              'peeler_(tool_for_fruit_and_vegetables)': 'knife',
+                                              'piggy_bank': 'hog', 'playpen': 'bed',
+                                              'police_van': 'car_(automobile)', 'poncho': 'coat',
+                                              'pool_table': 'table',
+                                              'stepladder': 'ladder', 'sugar_bowl': 'bowl',
+                                              'tricycle': 'bicycle', 'vulture': 'bird'}
+
+                    train_info = pickle.load(open('./lvis-api/data/lvis_train_cats_info.pt', 'rb'))
+                    class_name_to_1230id = {item['name'].lower(): item['id'] for item in train_info}
+                    fewshot_1230ids = [class_name_to_1230id[k] for k in fewshot_map_to_parent.keys()]
+
+                    finetune_class_aps1 = {item['name']:exist_categories_in_val_ap_sorted[i]
+                                           for i, item in enumerate(exist_categories_in_val_sorted_on_inscount)
+                                            if item['id'] in fewshot_1230ids}
+
+                    fewshot_parent_map_val67_effective = {
+                        'space_shuttle': 'airplane',
+                        'shears': 'scissors',
+                        'sharpie': 'pen',
+                        'satchel': 'backpack',
+                        'vinegar': 'bottle',
+                        'carbonated_water': 'bottle',
+                        'police_van': 'car_(automobile)',
+                        'vulture': 'bird',
+                        'martini': 'wineglass'
+                    }
+
+                    train_info = pickle.load(open('./lvis-api/data/lvis_train_cats_info.pt', 'rb'))
+                    class_name_to_1230id = {item['name'].lower(): item['id'] for item in train_info}
+                    fewshot_1230ids = [class_name_to_1230id[k] for k in fewshot_parent_map_val67_effective.keys()]
+
+                    finetune_class_aps2 = {item['name']:exist_categories_in_val_ap_sorted[i]
+                                           for i, item in enumerate(exist_categories_in_val_sorted_on_inscount)
+                                            if item['id'] in fewshot_1230ids}
+
+                    zero_ap_classes = pickle.load(open('./lvis-api/data/zero_ap_classes_mrcnnr50_boxmask_ag.pt', 'rb'))
+                    finetune_class_ids = [item['id'] for item in zero_ap_classes if item['instance_count'] > 100]
+                    finetune_class_ids_on_val = [i for i, item in enumerate(exist_categories_in_val_sorted_on_inscount)
+                                                 if item['id'] in finetune_class_ids]
+                    finetune_class_aps = [exist_categories_in_val_ap_sorted[idx] for idx in finetune_class_ids_on_val]
+                    # print('finetune classes ap {}'.format(np.mean(finetune_class_aps)))
+                    ##less than 10 train ins classes ap
+                    less_10_classes_ap = [exist_categories_in_val_ap_sorted[i] for i, v in
+                     enumerate(exist_categories_in_val_in_train_ins_count) if v < 10]
+                    # print('each set results: 10, 100, 1000, ~')
+
+                    print_dict['(0, 10)'] = np.mean([exist_categories_in_val_ap_sorted[i] for i, v in
+                                   enumerate(exist_categories_in_val_in_train_ins_count) if v < 10])
+                    print_dict['[10, 100)'] = np.mean([exist_categories_in_val_ap_sorted[i] for i, v in
+                                   enumerate(exist_categories_in_val_in_train_ins_count) if v >= 10 and v < 100])
+                    print_dict['[100, 1000)'] = np.mean([exist_categories_in_val_ap_sorted[i] for i, v in
+                                   enumerate(exist_categories_in_val_in_train_ins_count) if v >= 100 and v < 1000])
+                    print_dict['[1000, ~)'] = np.mean([exist_categories_in_val_ap_sorted[i] for i, v in
+                                   enumerate(exist_categories_in_val_in_train_ins_count) if v >= 1000])
+                    # print_dict['Zero AP cates'] = (np.array(exist_categories_in_val_ap_sorted) == 0).sum()
+
+                continue
+
             if "AP" in key:
                 title = "Average Precision"
                 _type = "(AP)"
@@ -504,7 +647,14 @@ class LVISEval:
             else:
                 area_rng = "all"
 
-            print(template.format(title, _type, iou, area_rng, max_dets, cat_group_name, value))
+            print(template.format(_type, iou, area_rng, max_dets, cat_group_name, value * 100))
+
+        # print print_dict
+        for k, v in print_dict.items():
+            print(template.format('(AP)', '0.50:0.95', 'all', 300, k, v * 100))
+        print('========================================================')
+        # return exist_categories_in_val_ap_sorted
+        # return np.mean(exist_categories_in_val_ap_sorted)
 
     def get_results(self):
         if not self.results:
