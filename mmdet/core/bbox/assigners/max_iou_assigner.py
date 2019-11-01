@@ -76,12 +76,15 @@ class MaxIoUAssigner(BaseAssigner):
         # Added by liyu to solve the GPU_out_of_mem issue.
         # This solution will slow down the train.
         # ===============================================
-        bboxes = bboxes.cpu()
-        gt_bboxes = gt_bboxes.cpu()
-        if gt_bboxes_ignore is not None:
-            gt_bboxes_ignore = gt_bboxes_ignore.cpu()
-        if gt_labels is not None:
-            gt_labels = gt_labels.cpu()
+        max_gt_num = 50
+        gt_num = gt_bboxes.shape[0]
+        if gt_num > max_gt_num:
+            bboxes = bboxes.cpu()
+            gt_bboxes = gt_bboxes.cpu()
+            if gt_bboxes_ignore is not None:
+                gt_bboxes_ignore = gt_bboxes_ignore.cpu()
+            if gt_labels is not None:
+                gt_labels = gt_labels.cpu()
         # ===============================================
 
         bboxes = bboxes[:, :4]
@@ -104,10 +107,11 @@ class MaxIoUAssigner(BaseAssigner):
         # Added by liyu to solve the GPU_out_of_mem issue.
         # This solution will slow down the train.
         # ===============================================
-        assign_result.gt_inds = assign_result.gt_inds.cuda()
-        assign_result.max_overlaps = assign_result.max_overlaps.cuda()
-        if assign_result.labels is not None:
-            assign_result.labels = assign_result.labels.cuda()
+        if gt_num > max_gt_num:
+            assign_result.gt_inds = assign_result.gt_inds.cuda()
+            assign_result.max_overlaps = assign_result.max_overlaps.cuda()
+            if assign_result.labels is not None:
+                assign_result.labels = assign_result.labels.cuda()
         # ===============================================
 
         return assign_result
