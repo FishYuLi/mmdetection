@@ -53,7 +53,7 @@ def lvis_eval(result_files, result_types, lvis, max_dets=(100, 300, 1000), exist
         # cocoEval.accumulate()
         # cocoEval.summarize()
         lvisEval.run()
-        lvisEval.print_results(draw_ap_per_cate=True)
+        lvisEval.print_results()
 
 
 def lvis_fast_eval_recall(results,
