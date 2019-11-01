@@ -116,6 +116,8 @@ data
 *.log.json
 work_dirs/
 draw/
+lvis-api-wt/
+localdata/
 *\#*
 
 # Pytorch
