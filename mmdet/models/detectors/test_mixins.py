@@ -67,6 +67,73 @@ class BBoxTestMixin(object):
                                                 rcnn_test_cfg.max_per_img)
         return det_bboxes, det_labels, scores
 
+    def update_scores_with_reweight(self, scores, scores_reweight):
+
+        cls_ori = scores.argmax(dim=1)
+        cls_weigth = scores_reweight.argmax(dim=1)
+
+        for_pos = torch.where(cls_ori == 0, torch.zeros_like(cls_ori),
+                              torch.ones_like(cls_ori))
+        for_idx = for_pos.nonzero(as_tuple=True)[0]
+        cls_ori[for_idx] = cls_weigth[for_idx]
+
+        for_pos = self.mask4newhead[cls_ori]
+        # print(for_pos.sum())
+
+        # for_pos = torch.where(cls_ori == 0, torch.zeros_like(cls_ori),
+        #                          torch.ones_like(cls_ori))
+        for_idx = for_pos.nonzero(as_tuple=True)[0]
+
+        # back_score = torch.zeros((scores_reweight.shape[0], 1)).cuda()
+        # scores_reweight = torch.cat((back_score, scores_reweight), dim=1)
+
+        scores[for_idx] = scores_reweight[for_idx]
+
+        return scores
+
+    def simple_test_bboxes_reweight(self,
+                           x,
+                           img_meta,
+                           proposals,
+                           rcnn_test_cfg,
+                           rescale=False):
+        """Test only det bboxes without augmentation."""
+        rois = bbox2roi(proposals)
+        roi_feats = self.bbox_roi_extractor(
+            x[:len(self.bbox_roi_extractor.featmap_strides)], rois)
+        if self.with_shared_head:
+            roi_feats = self.shared_head(roi_feats)
+        cls_score, bbox_pred = self.bbox_head(roi_feats)
+        cls_score_reweight, bbox_pred_reweight = self.bbox_head_back(roi_feats)
+
+        img_shape = img_meta[0]['img_shape']
+        scale_factor = img_meta[0]['scale_factor']
+        bboxes, scores = self.bbox_head.get_det_bboxes(
+            rois,
+            cls_score,
+            bbox_pred,
+            img_shape,
+            scale_factor,
+            rescale=rescale,
+            cfg=None)
+
+        bboxes_reweight, scores_reweight = self.bbox_head_back.get_det_bboxes(
+            rois,
+            cls_score_reweight,
+            bbox_pred_reweight,
+            img_shape,
+            scale_factor,
+            rescale=rescale,
+            cfg=None)
+        # cfg=rcnn_test_cfg)
+
+        scores = self.update_scores_with_reweight(scores, scores_reweight)
+
+        det_bboxes, det_labels = multiclass_nms(bboxes, scores,
+                                                rcnn_test_cfg.score_thr,
+                                                rcnn_test_cfg.nms,
+                                                rcnn_test_cfg.max_per_img)
+        return det_bboxes, det_labels, scores
 
     def aug_test_bboxes(self, feats, img_metas, proposal_list, rcnn_test_cfg):
         aug_bboxes = []

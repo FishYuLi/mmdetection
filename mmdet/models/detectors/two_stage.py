@@ -45,6 +45,10 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
             self.bbox_roi_extractor = builder.build_roi_extractor(
                 bbox_roi_extractor)
             self.bbox_head = builder.build_head(bbox_head)
+            if test_cfg.get('test_mode', False):
+                self.use_reweight = True
+                self.bbox_head_back = builder.build_head(bbox_head)
+                self.mask4newhead = torch.load('./data/lvis/mask.pt').cuda()
 
         if mask_head is not None:
             if mask_roi_extractor is not None:
@@ -270,8 +274,12 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
         proposal_list = self.simple_test_rpn(
             x, img_meta, self.test_cfg.rpn) if proposals is None else proposals
 
-        det_bboxes, det_labels = self.simple_test_bboxes(
-            x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
+        if self.use_reweight:
+            det_bboxes, det_labels, scores = self.simple_test_bboxes_reweight(
+                x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
+        else:
+            det_bboxes, det_labels, scores = self.simple_test_bboxes(
+                x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=rescale)
         bbox_results = bbox2result(det_bboxes, det_labels,
                                    self.bbox_head.num_classes)
 

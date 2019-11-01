@@ -4,6 +4,8 @@ import os.path as osp
 import shutil
 import tempfile
 import pdb
+import numpy as np
+import pickle
 
 import mmcv
 import torch
@@ -16,16 +18,115 @@ from mmdet.core import lvis_eval, results2json, wrap_fp16_model
 from mmdet.datasets import build_dataloader, build_dataset
 from mmdet.models import build_detector
 
+from mmdet.core import build_assigner
 
-def single_gpu_test(model, data_loader, show=False):
+
+def accumulate_acc(num_ins, num_get, splitbin):
+    savelist = [num_get, num_ins]
+    # with open('tempcls.pkl', 'wb') as fout:
+    #     pickle.dump(savelist, fout)
+    print('Saving pro cls result to: {}'.format('tempcls.pkl'))
+
+    print('\n')
+    print('========================================================')
+    title_format = "| {} | {} | {} | {} | {} | {} |"
+    print(title_format.format('Type', 'IoU', 'Area', 'MaxDets', 'CatIds',
+                              'Result'))
+    print(title_format.format(':---:', ':---:', ':---:', ':---:', ':---:',
+                              ':---:'))
+    template = "| {:^6} | {:<9} | {:>6s} | {:>3d} | {:>12s} | {:2.2f}% |"
+    for k, v in splitbin.items():
+        ins_count = num_ins[v].sum().astype(np.float64)
+        get_count = num_get[v].sum().astype(np.float64)
+        acc = get_count / ins_count
+        print(template.format('(ACC)', '0.50:0.95', 'all', 300, k, acc * 100))
+
+def get_split_bin(dataset, num_ins):
+    split_file_name = './data/lvis/valsplit.pkl'
+
+    if osp.exists(split_file_name):
+        with open(split_file_name, 'rb') as fin:
+            splits = pickle.load(fin)
+        print('Load split file from: {}'.format(split_file_name))
+        return splits
+
+    print('Calculate split file...')
+    catsinfo = dataset.lvis.cats
+
+    bin10 = []
+    bin100 = []
+    bin1000 = []
+    binover = []
+
+    for cid, cate in catsinfo.items():
+        ins_count = cate['instance_count']
+        if num_ins[cid] == 0:
+            continue
+        if ins_count < 10:
+            bin10.append(cid)
+        elif ins_count < 100:
+            bin100.append(cid)
+        elif ins_count < 1000:
+            bin1000.append(cid)
+        else:
+            binover.append(cid)
+
+    splits = {}
+    splits['(0, 10)'] = np.array(bin10, dtype=np.int)
+    splits['[10, 100)'] = np.array(bin100, dtype=np.int)
+    splits['[100, 1000)'] = np.array(bin1000, dtype=np.int)
+    splits['[1000, ~)'] = np.array(binover, dtype=np.int)
+    splits['normal'] = np.arange(1, 1231)
+    splits['background'] = np.zeros((1,), dtype=np.int)
+    splits['all'] = np.arange(1231)
+
+    with open(split_file_name, 'wb') as f:
+        pickle.dump(splits, f)
+    print('Dump split file to: {}'.format(split_file_name))
+    return splits
+
+
+def single_gpu_test(model, data_loader, show=False, cfg=None):
     model.eval()
     results = []
     dataset = data_loader.dataset
+
     prog_bar = mmcv.ProgressBar(len(dataset))
+    box_assigner = build_assigner(cfg.train_cfg.rcnn.assigner)
+
+    num_cls = len(dataset.cat_ids) + 1
+    num_ins = np.zeros((num_cls,))
+    num_get = np.zeros((num_cls,))
+
     for i, data in enumerate(data_loader):
+
+        gt = dataset.get_ann_info(i)
+        gt_bboxes = gt['bboxes']
+        gt_labels = gt['labels']
+        gt_bboxes_ignore = gt['bboxes_ignore']
         with torch.no_grad():
-            result = model(return_loss=False, rescale=not show, **data)
+            result, proposals, pred_label = model(return_loss=False,
+                                                  rescale=not show, **data)
         results.append(result)
+
+        assign_label = np.zeros((proposals.shape[0]))
+        pred_label = pred_label.cpu().numpy()
+        if gt_bboxes.shape[0] > 0:
+            assign_result = box_assigner.assign(proposals,
+                                                torch.FloatTensor(
+                                                    gt_bboxes).cuda(),
+                                                torch.FloatTensor(
+                                                    gt_bboxes_ignore).cuda(),
+                                                None)
+            assign_gt_inds = assign_result.gt_inds.cpu().numpy()  # tensor([1000])
+            gt_labels = np.hstack((np.zeros((1,)), gt_labels))
+            assign_label = gt_labels[assign_gt_inds]
+
+        matches = (pred_label == assign_label).astype(np.int)
+        for ibox in range(pred_label.shape[0]):
+            gt_cls = assign_label[ibox].astype(np.int)
+            num_ins[gt_cls] += 1
+            num_get[gt_cls] += matches[ibox]
 
         if show:
             model.module.show_result(data, result)
@@ -33,6 +134,12 @@ def single_gpu_test(model, data_loader, show=False):
         batch_size = data['img'][0].size(0)
         for _ in range(batch_size):
             prog_bar.update()
+
+        # if i > 20:
+        #     break
+
+    splitbin = get_split_bin(dataset, num_ins)
+    accumulate_acc(num_ins, num_get, splitbin)
     return results
 
 
@@ -124,6 +231,7 @@ def parse_args():
         default='none',
         help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
+    parser.add_argument('--tau', type=float, default=1.0)
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
@@ -131,9 +239,7 @@ def parse_args():
 
 
 def reweight_cls(model):
-
     model_dict = model.state_dict()
-    # pdb.set_trace()
 
     cls_weight = model_dict['bbox_head.fc_cls.weight']  # ([1231, 1024])
 
@@ -151,6 +257,41 @@ def reweight_cls(model):
     # pdb.set_trace()
 
     return model
+
+
+def reweight_cls_newhead(model, tauuu):
+    model_dict = model.state_dict()
+
+    # Copy fcs
+    for k, v in model_dict.items():
+        if k.startswith('bbox_head.'):
+            newname = k.split('.')
+            newname[0] = newname[0] + '_back'
+            newname = '.'.join(newname)
+
+            model_dict[newname].copy_(v)
+
+            print('Copy param {:<30} to {:<30}'.format(k, newname))
+
+    def pnorm(weights, tau):
+        normB = torch.norm(weights, 2, 1)
+        ws = weights.clone()
+
+        for i in range(1, weights.shape[0]):
+            ws[i] = ws[i] / torch.pow(normB[i], tau)
+
+        return ws
+
+    reweight_set = ['bbox_head_back.fc_cls.weight']
+    tau = tauuu
+    for k in reweight_set:
+        weight = model_dict[k]  # ([1231, 1024])
+        weight = pnorm(weight, tau)
+        model_dict[k].copy_(weight)
+        print('Reweight param {:<30} with tau={}'.format(k, tau))
+
+    return model
+
 
 def main():
     args = parse_args()
@@ -171,6 +312,7 @@ def main():
         torch.backends.cudnn.benchmark = True
     cfg.model.pretrained = None
     cfg.data.test.test_mode = True
+    cfg.test_cfg.test_mode = True
 
     # init distributed env first, since logger depends on the dist info.
     if args.launcher == 'none':
@@ -202,11 +344,11 @@ def main():
     else:
         model.CLASSES = dataset.CLASSES
 
-    model = reweight_cls(model)
+    model = reweight_cls_newhead(model, args.tau)
 
     if not distributed:
         model = MMDataParallel(model, device_ids=[0])
-        outputs = single_gpu_test(model, data_loader, args.show)
+        outputs = single_gpu_test(model, data_loader, args.show, cfg)
     else:
         model = MMDistributedDataParallel(model.cuda())
         outputs = multi_gpu_test(model, data_loader, args.tmpdir)
