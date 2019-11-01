@@ -143,9 +143,17 @@ def build_optimizer(model, optimizer_cfg):
 def _dist_train(model, dataset, cfg, validate=False):
     # prepare data loaders
     dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]
+    if 'use_img_sampling' not in cfg.data:
+        cfg.data.update({'use_img_sampling':False})
+    if 'use_sample_out' not in cfg.data:
+        cfg.data.update({'use_sample_out':False})
+    print('--Dist-train--IS:{}--ISout:{}'.format(cfg.data.use_img_sampling,
+          cfg.data.use_sample_out))
     data_loaders = [
         build_dataloader(
-            ds, cfg.data.imgs_per_gpu, cfg.data.workers_per_gpu, dist=True)
+            ds, cfg.data.imgs_per_gpu, cfg.data.workers_per_gpu, dist=True,
+            use_img_sampling=cfg.data.use_img_sampling,
+            use_sample_out=cfg.data.use_sample_out)
         for ds in dataset
     ]
     # put model on gpus
