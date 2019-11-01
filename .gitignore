@@ -118,6 +118,9 @@ work_dirs/
 draw/
 lvis-api-wt/
 localdata/
+localenvtool
+*.back
+testall.sh
 *\#*
 
 # Pytorch
